@@ -19,14 +19,6 @@ This is the first modernization stage of the old Hana VITS project.
 - A single inference lock prevents overlapping GPU requests in this stage.
 - The API reports generation time, audio duration, RTF, device, and GPU memory.
 
-## Preserved model
-
-- Model: `models/G_latest.pth`
-- Config: `config/fine.json`
-- Hana speaker ID: `0`
-- Sample rate: `22050 Hz`
-- Original checkpoint SHA-256 is stored in `models/G_latest.pth.sha256`.
-
 ## Recommended environment
 
 Use Python 3.12 on the target Linux/Windows machine.
@@ -61,51 +53,4 @@ Then open:
 - API docs: `http://127.0.0.1:7860/docs`
 - Health: `http://127.0.0.1:7860/health`
 
-## API
 
-### POST `/tts`
-
-Request:
-
-```json
-{
-  "text": "こんにちは、マスター。",
-  "speaker": "Hana",
-  "language": "Japanese",
-  "speed": 1.0
-}
-```
-
-The response is a WAV file. The browser UI uses the same endpoint and creates a local Download WAV action from the returned audio.
-
-Optional query parameter:
-
-```text
-POST /tts?download=true
-```
-
-sets the response to attachment mode for direct downloads.
-
-### Compatibility alias
-
-`POST /v1/tts` accepts the same request body.
-
-## Environment variables
-
-- `HANA_MODEL` — model path
-- `HANA_CONFIG` — config path
-- `HANA_DEVICE` — `auto`, `cpu`, or `cuda:0`
-- `HANA_HOST` — bind address
-- `HANA_PORT` — bind port
-- `HANA_MAX_TEXT_LENGTH` — maximum request text length
-- `HANA_CORS_ORIGINS` — comma-separated allowed origins
-
-## Stage 1 verification
-
-The included static/API tests were run against the available CPU environment. The model loaded successfully and the FastAPI endpoint generated a valid WAV response. The test environment did not have an NVIDIA CUDA device, so RTX 5060 Ti performance has not been benchmarked yet.
-
-The Japanese path requires `pyopenjtalk`; the build keeps that dependency explicit. The multilingual Chinese frontend is optional and isolated so Japanese/English requests do not import it.
-
-## Important scope for Stage 1
-
-This stage intentionally does **not** modify the model architecture, retrain Hana, enable emotion conditioning, or convert the checkpoint to ONNX/TensorRT. Those come only after the new runtime has been benchmarked against the legacy application.
