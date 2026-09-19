@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hana VITS TTS</title>
+  <link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <p class="eyebrow">LOCAL TTS</p>
+        <h1>Hana VITS</h1>
+        <p class="muted">Standalone VITS runtime — no Gradio required.</p>
+      </div>
+      <div id="status" class="status">Loading model…</div>
+    </header>
+
+    <section class="card">
+      <label for="text">Text</label>
+      <textarea id="text" rows="6">こんにちは、マスター。</textarea>
+
+      <div class="grid">
+        <div>
+          <label for="speaker">Speaker</label>
+          <select id="speaker"></select>
+        </div>
+        <div>
+          <label for="language">Language</label>
+          <select id="language"></select>
+        </div>
+        <div>
+          <label for="speed">Speed</label>
+          <div class="speed-row">
+            <input id="speed" type="range" min="0.1" max="5" step="0.1" value="1">
+            <output id="speedValue">1.0×</output>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="generate">Generate Voice</button>
+        <button id="download" class="secondary" disabled>Download WAV</button>
+      </div>
+      <p id="message" class="muted"></p>
+    </section>
+
+    <section class="card">
+      <label>Output</label>
+      <audio id="audio" controls></audio>
+      <div id="metrics" class="metrics"></div>
+    </section>
+
+    <footer>
+      <span>API: <code>POST /tts</code></span>
+      <span>API docs: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></span>
+    </footer>
+  </main>
+  <script src="/web/app.js"></script>
+</body>
+</html>

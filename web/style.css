@@ -1,0 +1,29 @@
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+body { margin: 0; background: #0d1117; color: #e6edf3; }
+.page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+h1 { margin: 2px 0 8px; font-size: 34px; }
+.eyebrow { margin: 0; font-size: 12px; letter-spacing: .18em; color: #8b949e; }
+.muted { color: #8b949e; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 20px; margin: 16px 0; }
+label { display: block; margin-bottom: 8px; font-weight: 650; }
+textarea, select, input[type=range] { width: 100%; box-sizing: border-box; }
+textarea, select { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 10px; padding: 12px; }
+textarea { resize: vertical; }
+select { height: 42px; }
+.grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 16px; }
+.speed-row { display: flex; gap: 10px; align-items: center; }
+.speed-row input { flex: 1; }
+.speed-row output { width: 42px; text-align: right; color: #8b949e; }
+.actions { display: flex; gap: 10px; margin-top: 18px; }
+button { border: 0; border-radius: 10px; padding: 11px 16px; cursor: pointer; font-weight: 700; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+.status { padding: 7px 10px; border: 1px solid #30363d; border-radius: 999px; font-size: 12px; color: #8b949e; }
+a { color: #58a6ff; }
+audio { width: 100%; }
+.metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.metric { background: #0d1117; border: 1px solid #30363d; border-radius: 9px; padding: 7px 10px; font-size: 12px; color: #8b949e; }
+footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; font-size: 12px; color: #8b949e; }
+code { background: #0d1117; padding: 2px 5px; border-radius: 5px; }
+@media (max-width: 700px) { .grid { grid-template-columns: 1fr; } header { flex-direction: column; } footer { flex-direction: column; } }

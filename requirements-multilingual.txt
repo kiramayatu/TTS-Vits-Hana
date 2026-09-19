@@ -1,0 +1,6 @@
+# Optional Chinese frontend compatibility for the original zh/ja mixture cleaner.
+-r requirements.txt
+pypinyin==0.55.0
+jieba-py==0.46.12
+cn2an==0.5.24
+opencc==1.4.2

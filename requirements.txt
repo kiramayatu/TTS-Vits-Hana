@@ -1,0 +1,9 @@
+# Stage 1 minimal runtime for Hana VITS on Python 3.12.
+# PyTorch 2.14.0 is the current stable PyTorch release used for this build.
+torch==2.14.0
+numpy==2.5.3
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+soundfile==0.14.0
+unidecode==1.4.0
+pyopenjtalk==0.4.1

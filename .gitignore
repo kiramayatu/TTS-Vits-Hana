@@ -1,0 +1,38 @@
+# === Virtual env ===
+.venv/
+venv/
+env/
+
+# === Environment variables ===
+.env
+.env.*
+!.env.example
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# === Model & data besar ===
+models/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.sha256
+checkpoints/
+outputs/
+data/
+logs/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
