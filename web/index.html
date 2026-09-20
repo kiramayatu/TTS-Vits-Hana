@@ -19,7 +19,7 @@
 
     <section class="card">
       <label for="text">Text</label>
-      <textarea id="text" rows="6">こんにちは、マスター。</textarea>
+      <textarea id="text" rows="8">こんにちは、マスター。今日はどうしますか？ 私はいつでも準備できていますよ。</textarea>
 
       <div class="grid">
         <div>
@@ -36,13 +36,67 @@
             <input id="speed" type="range" min="0.1" max="5" step="0.1" value="1">
             <output id="speedValue">1.0×</output>
           </div>
+          <p class="control-help">Speech speed. 1.0× keeps the normal timing; below 1.0× is slower and above 1.0× is faster.</p>
         </div>
       </div>
 
+      <details class="advanced">
+        <summary>Advanced voice controls</summary>
+        <div class="grid advanced-grid">
+          <div>
+            <label for="noiseScale">Noise scale</label>
+            <div class="speed-row">
+              <input id="noiseScale" type="range" min="0" max="2" step="0.01" value="0.667">
+              <output id="noiseScaleValue">0.667</output>
+            </div>
+            <p class="control-help">Controls speech variation. Lower values tend to sound steadier/cleaner; higher values can add more variation and breathiness.</p>
+          </div>
+          <div>
+            <label for="noiseScaleW">Noise scale W</label>
+            <div class="speed-row">
+              <input id="noiseScaleW" type="range" min="0" max="2" step="0.01" value="0.8">
+              <output id="noiseScaleWValue">0.800</output>
+            </div>
+            <p class="control-help">Controls stochastic timing/prosody variation. Lower values are usually more stable; higher values allow more timing variation.</p>
+          </div>
+          <div>
+            <label for="sentenceMax">Sentence max chars</label>
+            <div class="speed-row">
+              <input id="sentenceMax" type="range" min="40" max="240" step="10" value="140">
+              <output id="sentenceMaxValue">140</output>
+            </div>
+            <p class="control-help">Maximum characters per sentence generation chunk. Lower values create smaller chunks, while higher values create fewer, longer TTS requests.</p>
+          </div>
+        </div>
+        <div class="voice-profile">
+          <div class="profile-row">
+            <div class="profile-field">
+              <label for="profileName">Profile name</label>
+              <input id="profileName" type="text" maxlength="40" placeholder="e.g. Soft Hana">
+            </div>
+            <button id="saveProfile" class="secondary">Save Profile</button>
+            <button id="resetVoice" class="secondary">Reset to Defaults</button>
+          </div>
+          <div class="profile-row">
+            <div class="profile-field">
+              <label for="profileSelect">Saved profiles</label>
+              <select id="profileSelect">
+                <option value="">No saved profiles</option>
+              </select>
+            </div>
+            <button id="loadProfile" class="secondary">Load Profile</button>
+            <button id="deleteProfile" class="secondary">Delete Profile</button>
+          </div>
+        </div>
+        <p class="muted small">Voice profiles are saved locally in this browser. They store Speed, Noise scale, Noise scale W, and Sentence max chars. “Reset to Defaults” only changes the controls; it does not delete saved profiles.</p>
+      </details>
+
       <div class="actions">
         <button id="generate">Generate Voice</button>
+        <button id="stop" class="secondary" disabled>Stop</button>
         <button id="download" class="secondary" disabled>Download WAV</button>
       </div>
+      <p class="muted small">Generate Voice uses sentence-sized VITS units internally, starts playing each completed unit immediately, and combines the same units into one final WAV for playback and download.</p>
       <p id="message" class="muted"></p>
     </section>
 
@@ -53,7 +107,7 @@
     </section>
 
     <footer>
-      <span>API: <code>POST /tts</code></span>
+      <span>API: <code>POST /tts</code> · Progressive playback uses <code>WS /ws/tts</code> internally</span>
       <span>API docs: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></span>
     </footer>
   </main>

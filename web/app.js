@@ -2,12 +2,77 @@ const $ = (id) => document.getElementById(id);
 let currentBlobUrl = null;
 let lastBlob = null;
 let lastFilename = 'hana-tts.wav';
+let streamSocket = null;
+let streamBlobs = [];
+let audioContext = null;
+let scheduledUntil = 0;
+let playbackSources = [];
+let streamGeneration = 0;
+let streamGapMs = 30;
+
+const DEFAULT_VOICE_PROFILE = Object.freeze({
+  speed: 1.0,
+  noise_scale: 0.667,
+  noise_scale_w: 0.8,
+  sentence_max: 140
+});
+const PROFILE_STORAGE_KEY = 'hanaVits.voiceProfiles.v1';
+
+function readProfiles() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+    const data = raw ? JSON.parse(raw) : {};
+    return (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeProfiles(profiles) {
+  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+}
+
+function currentVoiceProfile() {
+  return {
+    speed: Number($('speed').value),
+    noise_scale: Number($('noiseScale').value),
+    noise_scale_w: Number($('noiseScaleW').value),
+    sentence_max: Number($('sentenceMax').value)
+  };
+}
+
+function applyVoiceProfile(profile) {
+  const merged = {...DEFAULT_VOICE_PROFILE, ...profile};
+  $('speed').value = merged.speed;
+  $('noiseScale').value = merged.noise_scale;
+  $('noiseScaleW').value = merged.noise_scale_w;
+  $('sentenceMax').value = merged.sentence_max;
+  $('speed').dispatchEvent(new Event('input'));
+  $('noiseScale').dispatchEvent(new Event('input'));
+  $('noiseScaleW').dispatchEvent(new Event('input'));
+  $('sentenceMax').dispatchEvent(new Event('input'));
+}
+
+function refreshProfileSelect(selectedName = '') {
+  const profiles = readProfiles();
+  const names = Object.keys(profiles).sort((a, b) => a.localeCompare(b));
+  const select = $('profileSelect');
+  select.innerHTML = names.length
+    ? names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')
+    : '<option value="">No saved profiles</option>';
+  if (selectedName && profiles[selectedName]) select.value = selectedName;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+}
 
 async function loadStatus() {
   try {
     const res = await fetch('/status');
     const data = await res.json();
-    $('status').textContent = data.loaded ? `Ready · ${data.device}` : 'Model not loaded';
+    const dtype = data.dtype || 'unknown';
+    $('status').textContent = data.loaded ? `Ready · ${data.device} · ${dtype}` : 'Model not loaded';
     const speakerRes = await fetch('/speakers');
     const speakerData = await speakerRes.json();
     $('speaker').innerHTML = Object.keys(speakerData.speakers)
@@ -20,61 +85,348 @@ async function loadStatus() {
   }
 }
 
-function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+function setRange(id, outputId, digits = 1) {
+  const input = $(id);
+  const output = $(outputId);
+  const update = () => output.textContent = Number(input.value).toFixed(digits);
+  input.addEventListener('input', update);
+  update();
 }
 
-$('speed').addEventListener('input', () => {
-  $('speedValue').value = `${Number($('speed').value).toFixed(1)}×`;
-  $('speedValue').textContent = `${Number($('speed').value).toFixed(1)}×`;
+setRange('speed', 'speedValue', 1);
+setRange('noiseScale', 'noiseScaleValue', 3);
+setRange('noiseScaleW', 'noiseScaleWValue', 3);
+setRange('sentenceMax', 'sentenceMaxValue', 0);
+
+$('saveProfile').addEventListener('click', () => {
+  const name = $('profileName').value.trim();
+  if (!name) {
+    $('message').textContent = 'Enter a profile name first.';
+    $('profileName').focus();
+    return;
+  }
+  const profiles = readProfiles();
+  profiles[name] = currentVoiceProfile();
+  try {
+    writeProfiles(profiles);
+    refreshProfileSelect(name);
+    $('message').textContent = `Profile saved: ${name}`;
+  } catch (err) {
+    $('message').textContent = `Could not save profile: ${err.message || err}`;
+  }
 });
 
+$('loadProfile').addEventListener('click', () => {
+  const name = $('profileSelect').value;
+  const profiles = readProfiles();
+  if (!name || !profiles[name]) {
+    $('message').textContent = 'Select a saved profile first.';
+    return;
+  }
+  applyVoiceProfile(profiles[name]);
+  $('profileName').value = name;
+  $('message').textContent = `Profile loaded: ${name}`;
+});
+
+$('deleteProfile').addEventListener('click', () => {
+  const name = $('profileSelect').value;
+  if (!name) {
+    $('message').textContent = 'Select a saved profile first.';
+    return;
+  }
+  const profiles = readProfiles();
+  delete profiles[name];
+  writeProfiles(profiles);
+  refreshProfileSelect();
+  if ($('profileName').value === name) $('profileName').value = '';
+  $('message').textContent = `Profile deleted: ${name}`;
+});
+
+$('resetVoice').addEventListener('click', () => {
+  applyVoiceProfile(DEFAULT_VOICE_PROFILE);
+  $('message').textContent = 'Voice controls reset to defaults.';
+});
+
+refreshProfileSelect();
+
+function payload() {
+  return {
+    text: $('text').value,
+    speaker: $('speaker').value,
+    language: $('language').value,
+    speed: Number($('speed').value),
+    noise_scale: Number($('noiseScale').value),
+    noise_scale_w: Number($('noiseScaleW').value),
+    sentence_max: Number($('sentenceMax').value)
+  };
+}
+
+function showMetrics(headers) {
+  const metrics = [
+    ['generation', `${Number(headers.get('X-TTS-Generation-Ms') || 0).toFixed(0)} ms`],
+    ['audio', `${Number(headers.get('X-TTS-Audio-Seconds') || 0).toFixed(2)} s`],
+    ['RTF', Number(headers.get('X-TTS-RTF') || 0).toFixed(3)],
+    ['device', headers.get('X-TTS-Device') || 'unknown'],
+    ['dtype', headers.get('X-TTS-Dtype') || 'unknown'],
+    ['cache', headers.get('X-TTS-Cache-Hit') === '1' ? 'hit' : 'miss'],
+    ['text cache', headers.get('X-TTS-Text-Cache-Hit') === '1' ? 'hit' : 'miss'],
+    ['preprocess', `${Number(headers.get('X-TTS-Preprocess-Ms') || 0).toFixed(1)} ms`],
+    ['inference', `${Number(headers.get('X-TTS-Inference-Ms') || 0).toFixed(1)} ms`],
+    ['GPU memory', `${Number(headers.get('X-TTS-GPU-Memory-MB') || 0).toFixed(0)} MB`],
+    ['segments', headers.get('X-TTS-Segments') || '1']
+  ];
+  $('metrics').innerHTML = metrics.map(([k,v]) => `<span class="metric"><b>${k}</b>: ${escapeHtml(v)}</span>`).join('');
+}
+
+function blobFilename(contentDisposition, fallback = 'hana-tts.wav') {
+  return contentDisposition?.match(/filename="([^"]+)"/)?.[1] || fallback;
+}
+
+async function generateWithProgressivePlayback(runId) {
+  streamBlobs = [];
+  streamGapMs = 30;
+  stopPlayback();
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${location.host}/ws/tts`);
+  socket.binaryType = 'blob';
+  streamSocket = socket;
+
+  let segmentCount = 0;
+  let totalAudio = 0;
+  let totalGeneration = 0;
+  let completed = false;
+
+  return await new Promise((resolve, reject) => {
+    socket.onopen = () => {
+      socket.send(JSON.stringify({
+        action: 'start',
+        speaker: $('speaker').value,
+        language: $('language').value,
+        speed: Number($('speed').value),
+        noise_scale: Number($('noiseScale').value),
+        noise_scale_w: Number($('noiseScaleW').value),
+        max_chars: Number($('sentenceMax').value)
+      }));
+      socket.send(JSON.stringify({action: 'append', text: $('text').value}));
+      socket.send(JSON.stringify({action: 'flush'}));
+    };
+
+    socket.onmessage = async (event) => {
+      if (runId !== streamGeneration) return;
+      if (typeof event.data === 'string') {
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (err) {
+          reject(new Error(`Invalid server message: ${err.message || err}`));
+          return;
+        }
+        if (data.type === 'ready') {
+          streamGapMs = Number(data.segment_gap_ms ?? 30);
+          $('message').textContent = `Generating ${data.max_chars}-character sentence chunks and playing as ready…`;
+        } else if (data.type === 'segment') {
+          segmentCount += 1;
+          totalAudio += Number(data.audio_seconds || 0);
+          totalGeneration += Number(data.generation_ms || 0);
+          $('message').textContent = `Playing generated sentence ${segmentCount}: ${data.text}`;
+          $('metrics').innerHTML = [
+            ['segments', segmentCount],
+            ['audio generated', `${totalAudio.toFixed(2)} s`],
+            ['generation', `${totalGeneration.toFixed(0)} ms`],
+            ['last RTF', Number(data.rtf || 0).toFixed(3)],
+            ['cache', data.cache_hit ? 'hit' : 'miss']
+          ].map(([k,v]) => `<span class="metric"><b>${k}</b>: ${escapeHtml(v)}</span>`).join('');
+        } else if (data.type === 'done') {
+          completed = true;
+          if (!streamBlobs.length) {
+            reject(new Error('The TTS server returned no audio segments'));
+            return;
+          }
+          try {
+            const combined = await combineWavs(streamBlobs);
+            lastBlob = combined;
+            if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+            currentBlobUrl = URL.createObjectURL(combined);
+            $('audio').src = currentBlobUrl;
+            $('download').disabled = false;
+            lastFilename = `hana-${Date.now()}.wav`;
+            $('message').textContent = `Done. Generated ${segmentCount} sentence chunk(s) and started playback.`;
+            $('metrics').innerHTML += `<span class="metric"><b>final audio</b>: ${totalAudio.toFixed(2)} s</span>`;
+            resolve({segmentCount, totalAudio, totalGeneration});
+          } catch (err) {
+            reject(err);
+          } finally {
+            if (streamSocket === socket) {
+              streamSocket = null;
+            }
+            try { socket.close(1000, 'generation complete'); } catch (_) {}
+          }
+        } else if (data.type === 'cancelled') {
+          reject(new Error('Generation cancelled'));
+        } else if (data.type === 'error') {
+          reject(new Error(data.detail || 'TTS server error'));
+        }
+        return;
+      }
+
+      streamBlobs.push(event.data);
+      try {
+        await scheduleStreamBlob(event.data);
+      } catch (err) {
+        reject(new Error(`Playback error: ${err.message || err}`));
+      }
+    };
+
+    socket.onerror = () => reject(new Error('WebSocket TTS connection failed.'));
+
+    socket.onclose = (event) => {
+      if (streamSocket === socket) streamSocket = null;
+      if (!completed && runId === streamGeneration && event.code !== 1000) {
+        reject(new Error(`TTS connection closed unexpectedly (code ${event.code}).`));
+      }
+    };
+  });
+}
+
 $('generate').addEventListener('click', async () => {
+  const runId = ++streamGeneration;
   const button = $('generate');
   button.disabled = true;
+  $('stop').disabled = false;
   $('download').disabled = true;
-  $('message').textContent = 'Generating…';
   $('metrics').innerHTML = '';
+  $('message').textContent = 'Starting generation…';
 
   try {
-    const payload = {
-      text: $('text').value,
-      speaker: $('speaker').value,
-      language: $('language').value,
-      speed: Number($('speed').value)
-    };
-    const response = await fetch('/tts', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try { detail = (await response.json()).detail || detail; } catch (_) {}
-      throw new Error(detail);
-    }
-
-    lastBlob = await response.blob();
-    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = URL.createObjectURL(lastBlob);
-    $('audio').src = currentBlobUrl;
-    $('download').disabled = false;
-    lastFilename = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || 'hana-tts.wav';
-    $('message').textContent = 'Done.';
-
-    const metrics = [
-      ['generation', `${Number(response.headers.get('X-TTS-Generation-Ms') || 0).toFixed(0)} ms`],
-      ['audio', `${Number(response.headers.get('X-TTS-Audio-Seconds') || 0).toFixed(2)} s`],
-      ['RTF', Number(response.headers.get('X-TTS-RTF') || 0).toFixed(3)],
-      ['device', response.headers.get('X-TTS-Device') || 'unknown'],
-      ['GPU memory', `${Number(response.headers.get('X-TTS-GPU-Memory-MB') || 0).toFixed(0)} MB`]
-    ];
-    $('metrics').innerHTML = metrics.map(([k,v]) => `<span class="metric"><b>${k}</b>: ${escapeHtml(v)}</span>`).join('');
+    await ensureAudioContext();
+    await generateWithProgressivePlayback(runId);
   } catch (err) {
-    $('message').textContent = `Error: ${err.message || err}`;
+    if (runId === streamGeneration) {
+      $('message').textContent = `Error: ${err.message || err}`;
+    }
+    if (runId === streamGeneration && String(err.message || '').toLowerCase().includes('cancelled')) {
+      $('message').textContent = 'Generation stopped.';
+    }
   } finally {
-    button.disabled = false;
+    if (runId === streamGeneration) {
+      button.disabled = false;
+      $('stop').disabled = playbackSources.length === 0 && streamSocket === null;
+    }
   }
+});
+
+async function ensureAudioContext() {
+  if (!audioContext || audioContext.state === 'closed') {
+    audioContext = new AudioContext();
+  }
+  if (audioContext.state === 'suspended') await audioContext.resume();
+  return audioContext;
+}
+
+async function scheduleStreamBlob(blob) {
+  const ctx = await ensureAudioContext();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  const start = Math.max(ctx.currentTime + 0.03, scheduledUntil);
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(ctx.destination);
+  source.onended = () => {
+    playbackSources = playbackSources.filter(item => item !== source);
+    if (playbackSources.length === 0 && streamSocket === null) $('stop').disabled = true;
+  };
+  source.start(start);
+  playbackSources.push(source);
+  scheduledUntil = start + audioBuffer.duration + (streamGapMs / 1000);
+}
+
+function stopPlayback() {
+  for (const source of playbackSources) {
+    try { source.onended = null; source.stop(); } catch (_) {}
+  }
+  playbackSources = [];
+  scheduledUntil = 0;
+}
+
+function pcm16FromWav(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const riff = new TextDecoder().decode(new Uint8Array(arrayBuffer, 0, 4));
+  if (riff !== 'RIFF') throw new Error('Expected WAV/RIFF data');
+  let offset = 12;
+  let sampleRate = 22050;
+  let channels = 1;
+  let bits = 16;
+  let pcmOffset = -1;
+  let pcmLength = 0;
+  while (offset + 8 <= view.byteLength) {
+    const id = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset, 4));
+    const size = view.getUint32(offset + 4, true);
+    if (id === 'fmt ') {
+      const format = view.getUint16(offset + 8, true);
+      channels = view.getUint16(offset + 10, true);
+      sampleRate = view.getUint32(offset + 12, true);
+      bits = view.getUint16(offset + 22, true);
+      if (format !== 1 || bits !== 16) throw new Error('Only PCM16 WAV is supported for combined download');
+    } else if (id === 'data') {
+      pcmOffset = offset + 8;
+      pcmLength = size;
+      break;
+    }
+    offset += 8 + size + (size % 2);
+  }
+  if (pcmOffset < 0 || channels !== 1 || bits !== 16) throw new Error('Unsupported WAV layout');
+  return { bytes: new Uint8Array(arrayBuffer, pcmOffset, pcmLength), sampleRate };
+}
+
+async function combineWavs(blobs) {
+  const parts = await Promise.all(blobs.map(async blob => pcm16FromWav(await blob.arrayBuffer())));
+  if (!parts.length) throw new Error('No generated audio segments available');
+  const sampleRate = parts[0].sampleRate;
+  if (parts.some(p => p.sampleRate !== sampleRate)) throw new Error('Segment sample rates do not match');
+  const gapBytes = Math.max(0, Math.round(sampleRate * streamGapMs / 1000) * 2);
+  const total = parts.reduce((sum, p) => sum + p.bytes.byteLength, 0) + gapBytes * Math.max(0, parts.length - 1);
+  const out = new ArrayBuffer(44 + total);
+  const view = new DataView(out);
+  const writeText = (offset, text) => { for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i)); };
+  writeText(0, 'RIFF');
+  view.setUint32(4, 36 + total, true);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, 'data');
+  view.setUint32(40, total, true);
+  let cursor = 44;
+  const gap = new Uint8Array(gapBytes);
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    new Uint8Array(out, cursor, part.bytes.byteLength).set(part.bytes);
+    cursor += part.bytes.byteLength;
+    if (i + 1 < parts.length && gapBytes > 0) {
+      new Uint8Array(out, cursor, gapBytes).set(gap);
+      cursor += gapBytes;
+    }
+  }
+  return new Blob([out], {type: 'audio/wav'});
+}
+
+$('stop').addEventListener('click', () => {
+  streamGeneration += 1;
+  stopPlayback();
+  if (streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+    try { streamSocket.send(JSON.stringify({action: 'cancel'})); } catch (_) {}
+    try { streamSocket.close(1000, 'user stop'); } catch (_) {}
+  }
+  streamSocket = null;
+  $('generate').disabled = false;
+  $('stop').disabled = true;
+  $('message').textContent = 'Generation/playback stopped.';
 });
 
 $('download').addEventListener('click', () => {
