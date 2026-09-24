@@ -1,3 +1,12 @@
+# Changelog
+
+## Stage 3.0 — Runtime/UI hardening
+- Fixed Stop cancellation race when the WebSocket is still CONNECTING.
+- Prevented stale decoded audio from being scheduled after Stop.
+- Added live GPU/VRAM information to the web UI using the existing `/status` data.
+- Split status polling from one-time speaker/language option loading.
+- Kept FP32 as the production default based on the 5060 Ti benchmark.
+
 ## 2.3.1 – Unified Generate Voice playback
 - Removed the separate Stream Sentences button from the web UI.
 - Generate Voice now uses the shared sentence-sized generation pipeline and plays completed chunks progressively as one generation.

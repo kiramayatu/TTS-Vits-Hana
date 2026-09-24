@@ -14,7 +14,10 @@
         <h1>Hana VITS</h1>
         <p class="muted">Standalone VITS runtime — no Gradio required.</p>
       </div>
-      <div id="status" class="status">Loading model…</div>
+      <div class="status-stack">
+        <div id="status" class="status">Loading model…</div>
+        <div id="gpuInfo" class="gpu-info" aria-live="polite">GPU VRAM: checking…</div>
+      </div>
     </header>
 
     <section class="card">
@@ -96,7 +99,7 @@
         <button id="stop" class="secondary" disabled>Stop</button>
         <button id="download" class="secondary" disabled>Download WAV</button>
       </div>
-      <p class="muted small">Generate Voice uses sentence-sized VITS units internally, starts playing each completed unit immediately, and combines the same units into one final WAV for playback and download.</p>
+      <p class="muted small">Generate Voice uses sentence-sized VITS units internally, starts playing each completed unit immediately, and combines the same units into one final WAV for playback and download. Stop cancels the current generation and any queued playback.</p>
       <p id="message" class="muted"></p>
     </section>
 

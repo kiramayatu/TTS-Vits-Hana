@@ -24,14 +24,16 @@ button { border: 0; border-radius: 10px; padding: 11px 16px; cursor: pointer; fo
 button:not(.secondary) { background: #e6edf3; color: #0d1117; }
 button.secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
 button:disabled { opacity: .45; cursor: not-allowed; }
+.status-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
 .status { padding: 7px 10px; border: 1px solid #30363d; border-radius: 999px; font-size: 12px; color: #8b949e; }
+.gpu-info { padding: 6px 10px; border: 1px solid #30363d; border-radius: 9px; font-size: 11px; color: #8b949e; text-align: right; max-width: 420px; }
 a { color: #58a6ff; }
 audio { width: 100%; }
 .metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 9px; padding: 7px 10px; font-size: 12px; color: #8b949e; }
 footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; font-size: 12px; color: #8b949e; }
 code { background: #0d1117; padding: 2px 5px; border-radius: 5px; }
-@media (max-width: 700px) { .grid, .advanced-grid { grid-template-columns: 1fr; } header { flex-direction: column; } footer { flex-direction: column; } }
+@media (max-width: 700px) { .grid, .advanced-grid { grid-template-columns: 1fr; } header { flex-direction: column; } footer { flex-direction: column; } .status-stack { align-items: flex-start; } .gpu-info { text-align: left; } }
 
 .control-help { margin: 7px 0 0; color: #8b949e; font-size: 12px; line-height: 1.45; }
 .voice-profile { margin-top: 18px; padding-top: 16px; border-top: 1px solid #30363d; }

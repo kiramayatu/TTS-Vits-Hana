@@ -9,6 +9,8 @@ let scheduledUntil = 0;
 let playbackSources = [];
 let streamGeneration = 0;
 let streamGapMs = 30;
+let activeGeneration = null;
+let statusRequestInFlight = false;
 
 const DEFAULT_VOICE_PROFILE = Object.freeze({
   speed: 1.0,
@@ -68,20 +70,49 @@ function escapeHtml(value) {
 }
 
 async function loadStatus() {
+  if (statusRequestInFlight) return;
+  statusRequestInFlight = true;
   try {
-    const res = await fetch('/status');
+    const res = await fetch('/status', {cache: 'no-store'});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const dtype = data.dtype || 'unknown';
     $('status').textContent = data.loaded ? `Ready · ${data.device} · ${dtype}` : 'Model not loaded';
-    const speakerRes = await fetch('/speakers');
+
+    const gpu = data.gpu;
+    if (gpu && Number.isFinite(Number(gpu.memory_total_mb)) && Number(gpu.memory_total_mb) > 0) {
+      const allocated = Number(gpu.memory_allocated_mb || 0);
+      const reserved = Number(gpu.memory_reserved_mb || 0);
+      const total = Number(gpu.memory_total_mb);
+      const percent = (allocated / total) * 100;
+      $('gpuInfo').textContent = `${gpu.name || 'CUDA GPU'} · VRAM ${allocated.toFixed(0)} / ${total.toFixed(0)} MB (${percent.toFixed(1)}%) · reserved ${reserved.toFixed(0)} MB`;
+    } else {
+      $('gpuInfo').textContent = 'GPU VRAM: unavailable';
+    }
+  } catch (err) {
+    $('status').textContent = 'Server unavailable';
+    $('gpuInfo').textContent = 'GPU VRAM: unavailable';
+    $('message').textContent = String(err);
+  } finally {
+    statusRequestInFlight = false;
+  }
+}
+
+async function loadVoiceOptions() {
+  try {
+    const speakerRes = await fetch('/speakers', {cache: 'no-store'});
+    if (!speakerRes.ok) throw new Error(`HTTP ${speakerRes.status}`);
     const speakerData = await speakerRes.json();
+    const currentSpeaker = $('speaker').value;
+    const currentLanguage = $('language').value;
     $('speaker').innerHTML = Object.keys(speakerData.speakers)
       .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     $('language').innerHTML = speakerData.languages
       .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    if (currentSpeaker && [...$('speaker').options].some(o => o.value === currentSpeaker)) $('speaker').value = currentSpeaker;
+    if (currentLanguage && [...$('language').options].some(o => o.value === currentLanguage)) $('language').value = currentLanguage;
   } catch (err) {
-    $('status').textContent = 'Server unavailable';
-    $('message').textContent = String(err);
+    $('message').textContent = `Could not load voice options: ${err.message || err}`;
   }
 }
 
@@ -196,30 +227,72 @@ async function generateWithProgressivePlayback(runId) {
   let totalAudio = 0;
   let totalGeneration = 0;
   let completed = false;
+  let settled = false;
 
   return await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      if (activeGeneration?.runId === runId) activeGeneration = null;
+      if (streamSocket === socket) streamSocket = null;
+    };
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    const cancel = () => {
+      if (settled) return;
+      settled = true;
+      // The browser may still be CONNECTING when Stop is pressed. In that
+      // state we cannot send a message yet, so onopen below must detect the
+      // stale generation and close without sending start/append/flush.
+      if (socket.readyState === WebSocket.OPEN) {
+        try { socket.send(JSON.stringify({action: 'cancel'})); } catch (_) {}
+      }
+      try {
+        if (socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
+          socket.close(1000, 'user stop');
+        }
+      } catch (_) {}
+      cleanup();
+      reject(new Error('Generation cancelled'));
+    };
+
+    activeGeneration = {runId, cancel, socket};
+
     socket.onopen = () => {
-      socket.send(JSON.stringify({
-        action: 'start',
-        speaker: $('speaker').value,
-        language: $('language').value,
-        speed: Number($('speed').value),
-        noise_scale: Number($('noiseScale').value),
-        noise_scale_w: Number($('noiseScaleW').value),
-        max_chars: Number($('sentenceMax').value)
-      }));
-      socket.send(JSON.stringify({action: 'append', text: $('text').value}));
-      socket.send(JSON.stringify({action: 'flush'}));
+      // Critical race guard: Stop can happen while the socket is CONNECTING.
+      if (runId !== streamGeneration || settled) {
+        cancel();
+        return;
+      }
+      try {
+        socket.send(JSON.stringify({
+          action: 'start',
+          speaker: $('speaker').value,
+          language: $('language').value,
+          speed: Number($('speed').value),
+          noise_scale: Number($('noiseScale').value),
+          noise_scale_w: Number($('noiseScaleW').value),
+          max_chars: Number($('sentenceMax').value)
+        }));
+        socket.send(JSON.stringify({action: 'append', text: $('text').value}));
+        socket.send(JSON.stringify({action: 'flush'}));
+      } catch (err) {
+        fail(err);
+      }
     };
 
     socket.onmessage = async (event) => {
-      if (runId !== streamGeneration) return;
+      if (runId !== streamGeneration || settled) return;
       if (typeof event.data === 'string') {
         let data;
         try {
           data = JSON.parse(event.data);
         } catch (err) {
-          reject(new Error(`Invalid server message: ${err.message || err}`));
+          fail(new Error(`Invalid server message: ${err.message || err}`));
           return;
         }
         if (data.type === 'ready') {
@@ -238,13 +311,15 @@ async function generateWithProgressivePlayback(runId) {
             ['cache', data.cache_hit ? 'hit' : 'miss']
           ].map(([k,v]) => `<span class="metric"><b>${k}</b>: ${escapeHtml(v)}</span>`).join('');
         } else if (data.type === 'done') {
+          if (settled) return;
           completed = true;
           if (!streamBlobs.length) {
-            reject(new Error('The TTS server returned no audio segments'));
+            fail(new Error('The TTS server returned no audio segments'));
             return;
           }
           try {
             const combined = await combineWavs(streamBlobs);
+            if (runId !== streamGeneration || settled) return;
             lastBlob = combined;
             if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
             currentBlobUrl = URL.createObjectURL(combined);
@@ -253,37 +328,41 @@ async function generateWithProgressivePlayback(runId) {
             lastFilename = `hana-${Date.now()}.wav`;
             $('message').textContent = `Done. Generated ${segmentCount} sentence chunk(s) and started playback.`;
             $('metrics').innerHTML += `<span class="metric"><b>final audio</b>: ${totalAudio.toFixed(2)} s</span>`;
+            settled = true;
+            cleanup();
             resolve({segmentCount, totalAudio, totalGeneration});
           } catch (err) {
-            reject(err);
+            fail(err);
           } finally {
-            if (streamSocket === socket) {
-              streamSocket = null;
-            }
             try { socket.close(1000, 'generation complete'); } catch (_) {}
           }
         } else if (data.type === 'cancelled') {
-          reject(new Error('Generation cancelled'));
+          fail(new Error('Generation cancelled'));
         } else if (data.type === 'error') {
-          reject(new Error(data.detail || 'TTS server error'));
+          fail(new Error(data.detail || 'TTS server error'));
         }
         return;
       }
 
+      // Do not schedule stale audio that was decoded after Stop was pressed.
+      if (runId !== streamGeneration || settled) return;
       streamBlobs.push(event.data);
       try {
-        await scheduleStreamBlob(event.data);
+        await scheduleStreamBlob(event.data, runId);
       } catch (err) {
-        reject(new Error(`Playback error: ${err.message || err}`));
+        if (runId === streamGeneration && !settled) {
+          fail(new Error(`Playback error: ${err.message || err}`));
+        }
       }
     };
 
-    socket.onerror = () => reject(new Error('WebSocket TTS connection failed.'));
+    socket.onerror = () => fail(new Error('WebSocket TTS connection failed.'));
 
     socket.onclose = (event) => {
-      if (streamSocket === socket) streamSocket = null;
-      if (!completed && runId === streamGeneration && event.code !== 1000) {
-        reject(new Error(`TTS connection closed unexpectedly (code ${event.code}).`));
+      const wasCurrent = runId === streamGeneration;
+      cleanup();
+      if (!settled && wasCurrent && event.code !== 1000) {
+        fail(new Error(`TTS connection closed unexpectedly (code ${event.code}).`));
       }
     };
   });
@@ -324,10 +403,12 @@ async function ensureAudioContext() {
   return audioContext;
 }
 
-async function scheduleStreamBlob(blob) {
+async function scheduleStreamBlob(blob, runId = streamGeneration) {
   const ctx = await ensureAudioContext();
   const arrayBuffer = await blob.arrayBuffer();
   const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  if (runId !== streamGeneration) return;
+  if (!activeGeneration || activeGeneration.runId !== runId) return;
   const start = Math.max(ctx.currentTime + 0.03, scheduledUntil);
   const source = ctx.createBufferSource();
   source.buffer = audioBuffer;
@@ -419,11 +500,23 @@ async function combineWavs(blobs) {
 $('stop').addEventListener('click', () => {
   streamGeneration += 1;
   stopPlayback();
-  if (streamSocket && streamSocket.readyState === WebSocket.OPEN) {
-    try { streamSocket.send(JSON.stringify({action: 'cancel'})); } catch (_) {}
-    try { streamSocket.close(1000, 'user stop'); } catch (_) {}
+  const active = activeGeneration;
+  if (active) {
+    try { active.cancel(); } catch (_) {}
+  } else if (streamSocket) {
+    try {
+      if (streamSocket.readyState === WebSocket.OPEN) {
+        streamSocket.send(JSON.stringify({action: 'cancel'}));
+      }
+    } catch (_) {}
+    try {
+      if (streamSocket.readyState !== WebSocket.CLOSED && streamSocket.readyState !== WebSocket.CLOSING) {
+        streamSocket.close(1000, 'user stop');
+      }
+    } catch (_) {}
+    streamSocket = null;
   }
-  streamSocket = null;
+  activeGeneration = null;
   $('generate').disabled = false;
   $('stop').disabled = true;
   $('message').textContent = 'Generation/playback stopped.';
@@ -440,3 +533,5 @@ $('download').addEventListener('click', () => {
 });
 
 loadStatus();
+loadVoiceOptions();
+setInterval(loadStatus, 2000);
