@@ -1,23 +1,3 @@
-# Hana VITS — Modern Stage 2
-
-This build contains the Stage 1 standalone runtime plus Stage 2 performance and reliability upgrades.
-
-## What changed
-
-- The original `G_latest.pth` is preserved byte-for-byte.
-- The original Gradio application is moved to `legacy/app_legacy.py`.
-- A standalone FastAPI server is added in `api/server.py`.
-- A small HTML/CSS/JS web UI replaces Gradio for manual testing.
-- The new UI exposes a single canonical `Japanese` option; legacy `日本語` API requests remain accepted as an alias.
-- Generated audio is conservatively peak-normalized to avoid the very quiet output level of the legacy inference path.
-- Generated WAV audio can be played in-browser and downloaded.
-- `/tts` and `/v1/tts` are available for integration.
-- `/health`, `/status`, `/speakers`, and FastAPI `/docs` are available.
-- VITS model loading/checkpoint handling is isolated from HTTP/UI code.
-- Inference uses `model.eval()` and `torch.inference_mode()`.
-- The model is loaded once at startup and kept resident.
-- A single inference lock prevents overlapping GPU requests in this stage.
-- The API reports generation time, audio duration, RTF, device, and GPU memory.
 
 ## Recommended environment
 
@@ -92,12 +72,3 @@ sets the response to attachment mode for direct downloads.
 - `HANA_MAX_TEXT_LENGTH` — maximum request text length
 - `HANA_CORS_ORIGINS` — comma-separated allowed origins
 
-## Stage 1 verification
-
-The included static/API tests were run against the available CPU environment. The model loaded successfully and the FastAPI endpoint generated a valid WAV response. The test environment did not have an NVIDIA CUDA device, so RTX 5060 Ti performance has not been benchmarked yet.
-
-The Japanese path requires `pyopenjtalk`; the build keeps that dependency explicit. The multilingual Chinese frontend is optional and isolated so Japanese/English requests do not import it.
-
-## Important scope for Stage 1
-
-This stage intentionally does **not** modify the model architecture, retrain Hana, enable emotion conditioning, or convert the checkpoint to ONNX/TensorRT. Those come only after the new runtime has been benchmarked against the legacy application.
